@@ -1,0 +1,23 @@
+/* AutoApply Design System - CSS Variables */
+:root {
+  --color-primary: #2563EB;
+  --color-primary-hover: #1D4ED8;
+  --color-primary-light: #EFF6FF;
+  --color-dark: #1E293B;
+  --color-dark-text: #334155;
+  --color-muted: #94A3B8;
+  --color-background: #F8FAFC;
+  --color-white: #FFFFFF;
+  --color-border: #E2E8F0;
+  --color-success: #16A34A;
+  --color-warning: #F59E0B;
+  --color-danger: #DC2626;
+  --color-info: #0EA5E9;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--color-background);
+  color: var(--color-dark-text);
+  font-size: 14px;
+}

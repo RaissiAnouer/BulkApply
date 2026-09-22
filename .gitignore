@@ -1,0 +1,53 @@
+# Environments & Secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+backend/venv/
+.pytest_cache/
+
+# Databases
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Node & Build Outputs
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+dist-ssr/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Logs & Diagnostics
+*.log
+desktop.log
+backend/automation_logs/
+
+# Browser Automation & Edge Profiles (contains active cookies/sessions)
+desktop_profile/
+backend/browser_profiles/
+backend/test_diagnostic_profile/
+backend/test_profile/
+backend/test_profile_edge/
+
+# Uploads (user CV files)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# IDEs & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

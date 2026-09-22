@@ -1,0 +1,127 @@
+"""Job API endpoints for Job Seekers."""
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.middleware.auth import get_current_user
+from app.models.user import User
+from app.schemas.job import (
+    JobExtractRequest,
+    JobExtractedResponse,
+    JobSaveRequest,
+    JobUpdateRequest,
+    JobResponse,
+    JobListResponse,
+)
+from app.services import job_service
+
+router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+
+@router.post("/extract", response_model=JobExtractedResponse)
+def extract_job_from_url(
+    data: JobExtractRequest,
+    user: User = Depends(get_current_user),
+):
+    """Submit a URL to extract job posting data (preview — not saved yet)."""
+    try:
+        result = job_service.extract_job(data.url)
+        return JobExtractedResponse(url=data.url, **result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Extraction failed: {str(e)}"
+        )
+
+
+@router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
+def save_job(
+    data: JobSaveRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save a reviewed job to the user's job list."""
+    try:
+        return job_service.save_job(db, user, data)
+    except ValueError as e:
+        error_msg = str(e)
+        if "already added" in error_msg:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error_msg)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+
+
+@router.get("", response_model=JobListResponse)
+def list_jobs(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    q: str | None = Query(None, description="Search keyword"),
+    search: str | None = Query(None, description="Search keyword alias"),
+    location: str | None = Query(None),
+    work_type: str | None = Query(None),
+    experience_level: str | None = Query(None),
+    sort_by: str = Query("created_at", description="Sort field"),
+    sort_order: str = Query("desc", description="asc or desc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """List jobs with search, filtering, sorting, and pagination."""
+    keyword = q or search
+    return job_service.list_jobs(
+        db, user,
+        q=keyword,
+        location=location,
+        work_type=work_type,
+        experience_level=experience_level,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/{job_id}", response_model=JobResponse)
+def get_job(
+    job_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get a single job by ID."""
+    try:
+        return job_service.get_job(db, user, job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+
+@router.put("/{job_id}", response_model=JobResponse)
+def update_job(
+    job_id: int,
+    data: JobUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update an existing job's fields."""
+    try:
+        return job_service.update_job(db, user, job_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+
+@router.delete("/{job_id}")
+def delete_job(
+    job_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a job from the user's list."""
+    try:
+        job_service.delete_job(db, user, job_id)
+        return {"message": "Job deleted successfully."}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
