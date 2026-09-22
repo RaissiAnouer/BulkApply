@@ -51,17 +51,34 @@ def _is_valid_linkedin_url(url: str | None) -> bool:
     return bool(re.match(pattern, url, re.IGNORECASE))
 
 
+class JobContext:
+    """Lightweight context representing job metadata before DB persistence."""
+    def __init__(
+        self,
+        company: str | None = None,
+        title: str | None = None,
+        location: str | None = None,
+        url: str | None = None,
+        skills: str | None = None,
+    ):
+        self.company = company
+        self.title = title
+        self.location = location
+        self.url = url
+        self.skills = skills
+
+
 # ---------------------------------------------------------------------------
 # Stage 1: Company Identification
 # ---------------------------------------------------------------------------
 
-def identify_company(job: Job) -> tuple[str, str]:
+def identify_company(job: Any) -> tuple[str, str]:
     """
     Identifies target company name and calculates confidence level.
     Returns (company_name, confidence).
     """
-    company = (job.company or "").strip()
-    url = (job.url or "").strip()
+    company = (getattr(job, "company", None) or "").strip()
+    url = (getattr(job, "url", None) or "").strip()
 
     if company:
         # If company name is present and job URL has a corresponding domain
@@ -96,19 +113,23 @@ def identify_company(job: Job) -> tuple[str, str]:
 # Stage 2: Company Information Enrichment
 # ---------------------------------------------------------------------------
 
-def enrich_company_info(company_name: str, job: Job) -> dict[str, Any]:
+def enrich_company_info(company_name: str, job: Any) -> dict[str, Any]:
     """
     Enriches company information (website, LinkedIn page, industry, size, etc.)
     using Google Gemini AI. Falls back safely if API is unavailable.
     """
+    job_loc = getattr(job, "location", None)
+    job_skills = getattr(job, "skills", None)
+    job_url = getattr(job, "url", None)
+
     default_info = {
         "website": None,
         "linkedin_url": None,
         "industry": None,
         "description": None,
-        "headquarters": job.location,
+        "headquarters": job_loc,
         "company_size": None,
-        "technologies": job.skills,
+        "technologies": job_skills,
         "confidence": "LOW",
     }
 
@@ -120,7 +141,7 @@ def enrich_company_info(company_name: str, job: Job) -> dict[str, Any]:
         prompt = f"""
 You are a corporate intelligence analyst. Provide verified, public company profile information for:
 Company: "{company_name}"
-Context (Job location: {job.location}, Job URL: {job.url})
+Context (Job location: {job_loc}, Job URL: {job_url})
 
 Return ONLY valid JSON matching this structure:
 {{
@@ -210,7 +231,7 @@ def determine_target_roles(job_title: str | None) -> dict[str, list[str]]:
 # Stages 4, 5 & 6: Public Discovery, Verification & Relevance Classification
 # ---------------------------------------------------------------------------
 
-def discover_and_verify_contacts(company_name: str, job: Job) -> list[dict[str, Any]]:
+def discover_and_verify_contacts(company_name: str, job: Any) -> list[dict[str, Any]]:
     """
     Discovers publicly available professional profiles relevant to the job and company.
     Strictly enforces verified roles, evidence, and valid LinkedIn URL format.
@@ -219,7 +240,10 @@ def discover_and_verify_contacts(company_name: str, job: Job) -> list[dict[str, 
     if not GEMINI_API_KEY or not GEMINI_API_KEY.strip() or company_name == "Unknown Company":
         return []
 
-    target_roles = determine_target_roles(job.title)
+    job_title = getattr(job, "title", None)
+    job_loc = getattr(job, "location", None)
+
+    target_roles = determine_target_roles(job_title)
     hiring_roles_str = ", ".join(target_roles["hiring"])
     leadership_roles_str = ", ".join(target_roles["leadership"])
 
@@ -227,8 +251,8 @@ def discover_and_verify_contacts(company_name: str, job: Job) -> list[dict[str, 
         client = genai.Client(api_key=GEMINI_API_KEY.strip())
         prompt = f"""
 You are a professional recruitment research assistant.
-Job applied for: "{job.title or 'Unknown Position'}" at "{company_name}".
-Location: "{job.location or 'Global'}"
+Job applied for: "{job_title or 'Unknown Position'}" at "{company_name}".
+Location: "{job_loc or 'Global'}"
 
 Search target categories:
 - Hiring & Recruiting team: ({hiring_roles_str})
@@ -469,3 +493,147 @@ def delete_contact(db: Session, job_id: int, contact_id: int, user_id: int) -> N
 
     db.delete(contact)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Inline Intelligence during Job Extraction & Batch Save
+# ---------------------------------------------------------------------------
+
+def run_inline_company_intelligence(
+    company_name: str | None,
+    job_title: str | None = None,
+    job_location: str | None = None,
+    job_url: str | None = None,
+    job_skills: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Executes company & employee intelligence upfront during job URL extraction,
+    before the job has been saved to the database. Returns structured dictionary.
+    """
+    ctx = JobContext(
+        company=company_name,
+        title=job_title,
+        location=job_location,
+        url=job_url,
+        skills=job_skills,
+    )
+
+    company, id_conf = identify_company(ctx)
+    if not company or company == "Unknown Company":
+        return None
+
+    try:
+        info = enrich_company_info(company, ctx)
+        contacts = discover_and_verify_contacts(company, ctx)
+
+        conf = info.get("confidence", id_conf)
+        if info.get("confidence") == "HIGH" and id_conf == "HIGH":
+            conf = "HIGH"
+
+        return {
+            "company_name": company,
+            "website": info.get("website"),
+            "linkedin_url": info.get("linkedin_url"),
+            "industry": info.get("industry"),
+            "description": info.get("description"),
+            "headquarters": info.get("headquarters"),
+            "company_size": info.get("company_size"),
+            "technologies": info.get("technologies"),
+            "confidence": conf,
+            "contacts": contacts,
+        }
+    except Exception as e:
+        logger.warning("[CompanyIntelligence] Inline intelligence extraction failed for %s: %s", company, e)
+        return {
+            "company_name": company,
+            "website": None,
+            "linkedin_url": None,
+            "industry": None,
+            "description": None,
+            "headquarters": job_location,
+            "company_size": None,
+            "technologies": job_skills,
+            "confidence": id_conf,
+            "contacts": [],
+        }
+
+
+def persist_company_intelligence_from_data(
+    db: Session,
+    job_id: int,
+    data: Any,
+) -> CompanyIntelligence:
+    """
+    Persists CompanyIntelligence and CompanyContact records directly from
+    an inline extraction payload (CompanyIntelligenceData schema or dict).
+    """
+    if hasattr(data, "model_dump"):
+        raw_dict = data.model_dump()
+    elif isinstance(data, dict):
+        raw_dict = data
+    else:
+        raw_dict = {}
+
+    intel = db.query(CompanyIntelligence).filter(CompanyIntelligence.job_id == job_id).first()
+    if not intel:
+        intel = CompanyIntelligence(
+            job_id=job_id,
+            company_name=raw_dict.get("company_name") or "Unknown Company",
+        )
+        db.add(intel)
+        db.flush()
+
+    intel.company_name = raw_dict.get("company_name") or intel.company_name
+    intel.website = raw_dict.get("website")
+    intel.linkedin_url = raw_dict.get("linkedin_url")
+    intel.industry = raw_dict.get("industry")
+    intel.description = raw_dict.get("description")
+    intel.headquarters = raw_dict.get("headquarters")
+    intel.company_size = raw_dict.get("company_size")
+    intel.technologies = raw_dict.get("technologies")
+    intel.confidence = raw_dict.get("confidence") or "UNKNOWN"
+    intel.status = "COMPLETED"
+    intel.error_message = None
+    intel.updated_at = datetime.utcnow()
+
+    # Clear old contacts if any
+    db.query(CompanyContact).filter(CompanyContact.intelligence_id == intel.id).delete()
+
+    raw_contacts = raw_dict.get("contacts") or []
+    for c in raw_contacts:
+        if isinstance(c, dict):
+            c_name = c.get("full_name")
+            c_title = c.get("job_title")
+            c_cat = c.get("category", "other")
+            c_dept = c.get("department")
+            c_link = c.get("linkedin_url")
+            c_conf = c.get("confidence", "MEDIUM")
+            c_ev = c.get("evidence")
+            c_rel = c.get("is_relevant", True)
+        else:
+            c_name = getattr(c, "full_name", None)
+            c_title = getattr(c, "job_title", None)
+            c_cat = getattr(c, "category", "other")
+            c_dept = getattr(c, "department", None)
+            c_link = getattr(c, "linkedin_url", None)
+            c_conf = getattr(c, "confidence", "MEDIUM")
+            c_ev = getattr(c, "evidence", None)
+            c_rel = getattr(c, "is_relevant", True)
+
+        if c_name and c_title:
+            contact = CompanyContact(
+                intelligence_id=intel.id,
+                full_name=c_name,
+                job_title=c_title,
+                category=c_cat,
+                department=c_dept,
+                linkedin_url=c_link,
+                confidence=c_conf,
+                evidence=c_ev,
+                is_relevant=c_rel,
+            )
+            db.add(contact)
+
+    db.commit()
+    db.refresh(intel)
+    return intel

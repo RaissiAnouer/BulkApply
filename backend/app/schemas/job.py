@@ -3,6 +3,7 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, field_validator
 import re
+from app.schemas.company_intelligence import CompanyIntelligenceData
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +36,7 @@ class JobSaveRequest(BaseModel):
     salary: str | None = None
     application_url: str | None = None
     application_method: str | None = None
+    company_intelligence: CompanyIntelligenceData | None = None
 
     @field_validator("work_type")
     @classmethod
@@ -101,6 +103,7 @@ class JobExtractedResponse(BaseModel):
     application_method: str | None = None
     extraction_method: str | None = None  # "gemini_url_context", "gemini_text_fallback", "manual"
     extraction_warning: str | None = None  # warning message if extraction was partial/failed
+    company_intelligence: CompanyIntelligenceData | None = None
 
 
 class JobResponse(BaseModel):

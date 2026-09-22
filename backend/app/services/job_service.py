@@ -59,6 +59,15 @@ def save_job(db: Session, user: User, data: JobSaveRequest) -> Job:
     db.add(job)
     db.commit()
     db.refresh(job)
+
+    if data.company_intelligence:
+        try:
+            from app.services.company_intelligence_service import persist_company_intelligence_from_data
+            persist_company_intelligence_from_data(db, job.id, data.company_intelligence)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("[SAVE_JOB] Failed to persist inline company intelligence: %s", e)
+
     return job
 
 
@@ -243,6 +252,7 @@ async def bulk_extract_jobs(db: Session, user: User, urls: list[str]) -> BulkJob
 def bulk_save_jobs(db: Session, user: User, data: BulkJobSaveRequest) -> BulkJobSaveResponse:
     """Save multiple reviewed jobs in bulk, skipping duplicates."""
     saved_jobs = []
+    saved_pairs = []
     skipped_count = 0
 
     incoming_urls = [j.url.strip() for j in data.jobs if j.url and j.url.strip()]
@@ -276,10 +286,20 @@ def bulk_save_jobs(db: Session, user: User, data: BulkJobSaveRequest) -> BulkJob
         db.add(job)
         existing_urls.add(u)
         saved_jobs.append(job)
+        saved_pairs.append((job, job_req))
 
     db.commit()
     for j in saved_jobs:
         db.refresh(j)
+
+    for j, job_req in saved_pairs:
+        if job_req.company_intelligence:
+            try:
+                from app.services.company_intelligence_service import persist_company_intelligence_from_data
+                persist_company_intelligence_from_data(db, j.id, job_req.company_intelligence)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("[BULK_SAVE] Failed to persist inline company intelligence: %s", e)
 
     return BulkJobSaveResponse(
         saved_count=len(saved_jobs),

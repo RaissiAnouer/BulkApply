@@ -4,6 +4,30 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 
+class CompanyContactData(BaseModel):
+    full_name: str
+    job_title: str
+    category: str = "other"  # "hiring", "leadership", "other"
+    department: str | None = None
+    linkedin_url: str | None = None
+    confidence: str = "MEDIUM"  # "HIGH", "MEDIUM", "LOW"
+    evidence: str | None = None
+    is_relevant: bool = True
+
+
+class CompanyIntelligenceData(BaseModel):
+    company_name: str
+    website: str | None = None
+    linkedin_url: str | None = None
+    industry: str | None = None
+    description: str | None = None
+    headquarters: str | None = None
+    company_size: str | None = None
+    technologies: str | None = None
+    confidence: str = "UNKNOWN"  # "HIGH", "MEDIUM", "LOW", "UNKNOWN"
+    contacts: list[CompanyContactData] = []
+
+
 class CompanyContactResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

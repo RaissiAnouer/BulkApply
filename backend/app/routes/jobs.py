@@ -47,8 +47,12 @@ def bulk_save_jobs(
 ):
     """Save multiple reviewed jobs in bulk to the user's job list."""
     res = job_service.bulk_save_jobs(db, user, data)
+    req_map = {j.url.strip(): j for j in data.jobs if j.url}
     for saved_job in res.saved_jobs:
-        background_tasks.add_task(company_intelligence_service.run_company_intelligence_task, saved_job.id)
+        job_req = req_map.get(saved_job.url)
+        # Only queue background intelligence if intelligence was not already extracted and persisted inline
+        if not job_req or not job_req.company_intelligence:
+            background_tasks.add_task(company_intelligence_service.run_company_intelligence_task, saved_job.id)
     return res
 
 
@@ -75,16 +79,13 @@ def save_job(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Save a reviewed job to the user's job list and trigger company intelligence."""
+    """Save a reviewed job to the user's job list and trigger company intelligence if not already extracted."""
     try:
         job = job_service.save_job(db, user, data)
-        background_tasks.add_task(company_intelligence_service.run_company_intelligence_task, job.id)
+        # If company intelligence was not provided upfront, run it in the background as fallback
+        if not data.company_intelligence:
+            background_tasks.add_task(company_intelligence_service.run_company_intelligence_task, job.id)
         return job
-    except ValueError as e:
-        error_msg = str(e)
-        if "already added" in error_msg:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error_msg)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
     except ValueError as e:
         error_msg = str(e)
         if "already added" in error_msg:

@@ -157,6 +157,43 @@ def test_company_intelligence_suite():
         fresh_job2 = db.query(Job).filter(Job.id == job2.id).first()
         assert fresh_job2.status == "ready"
 
+        # 7. Test Inline Extraction and Direct Persistence via save_job
+        with patch("app.services.company_intelligence_service.enrich_company_info", return_value=mock_info), \
+             patch("app.services.company_intelligence_service.discover_and_verify_contacts", return_value=mock_contacts):
+            inline_intel = company_intelligence_service.run_inline_company_intelligence(
+                company_name="Vercel",
+                job_title="Frontend Architect",
+                job_location="Remote",
+                job_url="https://vercel.com/careers/frontend-architect",
+                job_skills="React, Next.js",
+            )
+            assert inline_intel is not None
+            assert inline_intel["company_name"] == "Vercel"
+            assert len(inline_intel["contacts"]) == 3
+
+            # Now test saving a job with this inline intelligence attached
+            from app.schemas.job import JobSaveRequest
+            from app.schemas.company_intelligence import CompanyIntelligenceData
+            from app.services import job_service
+
+            job_req = JobSaveRequest(
+                url="https://vercel.com/careers/frontend-architect",
+                title="Frontend Architect",
+                company="Vercel",
+                location="Remote",
+                company_intelligence=CompanyIntelligenceData(**inline_intel),
+            )
+            saved_job = job_service.save_job(db, user, job_req)
+            assert saved_job.id is not None
+
+            # Verify intelligence was saved directly without waiting for a background task
+            db_intel = db.query(CompanyIntelligence).filter(CompanyIntelligence.job_id == saved_job.id).first()
+            assert db_intel is not None
+            assert db_intel.company_name == "Vercel"
+            assert db_intel.status == "COMPLETED"
+            saved_contacts = db.query(CompanyContact).filter(CompanyContact.intelligence_id == db_intel.id).all()
+            assert len(saved_contacts) == 3
+
         print("ALL COMPANY & CONTACT INTELLIGENCE TESTS PASSED SUCCESSFULLY!")
 
     finally:

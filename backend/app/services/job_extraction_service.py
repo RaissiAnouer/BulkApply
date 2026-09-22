@@ -46,37 +46,56 @@ def extract_job_from_url(url: str) -> dict:
         result["extraction_method"] = "gemini_url_context"
         result["extraction_warning"] = None
         logger.info("[JOB_EXTRACT] Gemini URL Context succeeded for %s", url)
-        return result
+    else:
+        # Fallback: fetch HTML manually, extract text, send to Gemini
+        result = _try_html_text_gemini(url)
+        if result is not None:
+            result["extraction_method"] = "gemini_text_fallback"
+            result["extraction_warning"] = (
+                "Extracted using fallback method. Some fields may be less accurate."
+            )
+            logger.info("[JOB_EXTRACT] Gemini text fallback succeeded for %s", url)
+        else:
+            # Final fallback: empty data
+            logger.warning("[JOB_EXTRACT] All extraction methods failed for %s", url)
+            result = {
+                "title": None,
+                "company": None,
+                "location": None,
+                "work_type": None,
+                "experience_level": None,
+                "skills": None,
+                "description": None,
+                "salary": None,
+                "application_url": None,
+                "application_method": None,
+                "extraction_method": "manual",
+                "extraction_warning": (
+                    "We could not extract job information from this page. "
+                    "You can enter the details manually."
+                ),
+            }
 
-    # Fallback: fetch HTML manually, extract text, send to Gemini
-    result = _try_html_text_gemini(url)
-    if result is not None:
-        result["extraction_method"] = "gemini_text_fallback"
-        result["extraction_warning"] = (
-            "Extracted using fallback method. Some fields may be less accurate."
-        )
-        logger.info("[JOB_EXTRACT] Gemini text fallback succeeded for %s", url)
-        return result
+    # Perform inline company & employees intelligence during job extraction
+    company_name = result.get("company")
+    if company_name or url:
+        try:
+            from app.services.company_intelligence_service import run_inline_company_intelligence
+            intel = run_inline_company_intelligence(
+                company_name=company_name,
+                job_title=result.get("title"),
+                job_location=result.get("location"),
+                job_url=url,
+                job_skills=result.get("skills"),
+            )
+            result["company_intelligence"] = intel
+        except Exception as e:
+            logger.warning("[JOB_EXTRACT] Inline company intelligence failed for %s: %s", url, e)
+            result["company_intelligence"] = None
+    else:
+        result["company_intelligence"] = None
 
-    # Final fallback: empty data
-    logger.warning("[JOB_EXTRACT] All extraction methods failed for %s", url)
-    return {
-        "title": None,
-        "company": None,
-        "location": None,
-        "work_type": None,
-        "experience_level": None,
-        "skills": None,
-        "description": None,
-        "salary": None,
-        "application_url": None,
-        "application_method": None,
-        "extraction_method": "manual",
-        "extraction_warning": (
-            "We could not extract job information from this page. "
-            "You can enter the details manually."
-        ),
-    }
+    return result
 
 
 def _try_gemini_url_context(url: str) -> dict | None:

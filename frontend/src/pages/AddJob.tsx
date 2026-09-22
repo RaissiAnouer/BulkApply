@@ -12,10 +12,35 @@ import {
   Table,
   Badge,
   ProgressBar,
+  Modal,
 } from 'react-bootstrap'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import Navbar from '../components/Navbar'
+
+export interface CompanyContactData {
+  full_name: string
+  job_title: string
+  category: 'hiring' | 'leadership' | 'other'
+  department?: string | null
+  linkedin_url?: string | null
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW'
+  evidence?: string | null
+  is_relevant?: boolean
+}
+
+export interface CompanyIntelligenceData {
+  company_name: string
+  website?: string | null
+  linkedin_url?: string | null
+  industry?: string | null
+  description?: string | null
+  headquarters?: string | null
+  company_size?: string | null
+  technologies?: string | null
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'
+  contacts: CompanyContactData[]
+}
 
 interface ExtractedJob {
   url: string
@@ -31,6 +56,7 @@ interface ExtractedJob {
   application_method: string | null
   extraction_method: string | null
   extraction_warning: string | null
+  company_intelligence?: CompanyIntelligenceData | null
 }
 
 interface BulkJobItemResult {
@@ -65,6 +91,7 @@ interface BulkStagingItem {
   application_url: string
   application_method: string
   selected: boolean
+  company_intelligence?: CompanyIntelligenceData | null
 }
 
 export default function AddJob() {
@@ -99,6 +126,7 @@ export default function AddJob() {
   const [bulkSaving, setBulkSaving] = useState(false)
   const [bulkSaveError, setBulkSaveError] = useState('')
   const [bulkSaveSuccess, setBulkSaveSuccess] = useState('')
+  const [selectedBulkIntel, setSelectedBulkIntel] = useState<CompanyIntelligenceData | null>(null)
 
   // Parse valid URLs from raw textarea in real-time
   const parsedUrls = useMemo(() => {
@@ -178,6 +206,7 @@ export default function AddJob() {
           salary: singleForm.salary || null,
           application_url: singleForm.application_url || null,
           application_method: singleForm.application_method || null,
+          company_intelligence: singleExtracted?.company_intelligence || null,
         }),
       })
       navigate('/jobs')
@@ -239,6 +268,7 @@ export default function AddJob() {
         application_url: item.data?.application_url || item.url,
         application_method: item.data?.application_method || 'form',
         selected: item.status === 'extracted',
+        company_intelligence: item.data?.company_intelligence || null,
       }))
 
       setBulkItems(staging)
@@ -296,6 +326,7 @@ export default function AddJob() {
           salary: item.salary || null,
           application_url: item.application_url || null,
           application_method: item.application_method || null,
+          company_intelligence: item.company_intelligence || null,
         })),
       }
 
@@ -488,6 +519,146 @@ export default function AddJob() {
                       </Col>
                     </Row>
 
+                    {/* Inline Company & Contacts Intelligence Preview */}
+                    {singleExtracted?.company_intelligence && (
+                      <div className="mt-4 p-3 rounded border bg-light">
+                        <div className="d-flex justify-content-between align-items-center mb-2">
+                          <div className="d-flex align-items-center gap-2">
+                            <span className="fs-5">🏢</span>
+                            <span className="fw-bold fs-6">
+                              {singleExtracted.company_intelligence.company_name}
+                            </span>
+                            <Badge
+                              bg={
+                                singleExtracted.company_intelligence.confidence === 'HIGH'
+                                  ? 'success'
+                                  : 'secondary'
+                              }
+                              style={{ fontSize: 10 }}
+                            >
+                              {singleExtracted.company_intelligence.confidence} Confidence
+                            </Badge>
+                          </div>
+                          <div className="d-flex gap-2">
+                            {singleExtracted.company_intelligence.website && (
+                              <a
+                                href={singleExtracted.company_intelligence.website}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn btn-sm btn-outline-primary py-0 px-2"
+                                style={{ fontSize: 12 }}
+                              >
+                                🌐 Website
+                              </a>
+                            )}
+                            {singleExtracted.company_intelligence.linkedin_url && (
+                              <a
+                                href={singleExtracted.company_intelligence.linkedin_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn btn-sm btn-outline-primary py-0 px-2"
+                                style={{ fontSize: 12 }}
+                              >
+                                💼 LinkedIn
+                              </a>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="d-flex flex-wrap gap-3 small text-muted mb-2">
+                          {singleExtracted.company_intelligence.industry && (
+                            <div><strong>Industry:</strong> {singleExtracted.company_intelligence.industry}</div>
+                          )}
+                          {singleExtracted.company_intelligence.headquarters && (
+                            <div><strong>HQ:</strong> {singleExtracted.company_intelligence.headquarters}</div>
+                          )}
+                          {singleExtracted.company_intelligence.company_size && (
+                            <div><strong>Size:</strong> {singleExtracted.company_intelligence.company_size}</div>
+                          )}
+                        </div>
+
+                        {singleExtracted.company_intelligence.description && (
+                          <div className="small text-secondary mb-3">
+                            {singleExtracted.company_intelligence.description}
+                          </div>
+                        )}
+
+                        <div className="mt-3">
+                          <div className="d-flex justify-content-between align-items-center mb-2">
+                            <span className="fw-semibold small">
+                              Discovered Employees ({singleExtracted.company_intelligence.contacts?.length || 0})
+                            </span>
+                            <span className="text-muted" style={{ fontSize: 11 }}>
+                              Public professional research for outreach preparation
+                            </span>
+                          </div>
+
+                          {(!singleExtracted.company_intelligence.contacts ||
+                            singleExtracted.company_intelligence.contacts.length === 0) ? (
+                            <div className="text-muted small py-2">
+                              No public employee profiles identified during extraction.
+                            </div>
+                          ) : (
+                            <div className="d-flex flex-column gap-2">
+                              {singleExtracted.company_intelligence.contacts.map((contact, idx) => (
+                                <Card key={idx} className="border bg-white p-2" style={{ borderRadius: 6 }}>
+                                  <div className="d-flex justify-content-between align-items-start">
+                                    <div>
+                                      <div className="d-flex align-items-center gap-2 mb-1">
+                                        <span className="fw-semibold small">{contact.full_name}</span>
+                                        <Badge
+                                          bg={
+                                            contact.category === 'hiring'
+                                              ? 'success'
+                                              : contact.category === 'leadership'
+                                              ? 'primary'
+                                              : 'secondary'
+                                          }
+                                          style={{ fontSize: 10 }}
+                                        >
+                                          {contact.category === 'hiring'
+                                            ? 'Hiring'
+                                            : contact.category === 'leadership'
+                                            ? 'Leadership'
+                                            : 'Team'}
+                                        </Badge>
+                                      </div>
+                                      <div className="text-muted" style={{ fontSize: 12 }}>
+                                        {contact.job_title}
+                                        {contact.department && ` • ${contact.department}`}
+                                      </div>
+                                      {contact.evidence && (
+                                        <div className="text-secondary fst-italic" style={{ fontSize: 11 }}>
+                                          💡 {contact.evidence}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div>
+                                      {contact.linkedin_url ? (
+                                        <a
+                                          href={contact.linkedin_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="btn btn-sm btn-outline-primary py-0 px-2"
+                                          style={{ fontSize: 12 }}
+                                        >
+                                          🔗 LinkedIn
+                                        </a>
+                                      ) : (
+                                        <Badge bg="light" text="muted" className="border">
+                                          No public link
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </div>
+                                </Card>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {singleSaveError && <Alert variant="danger" className="mt-3">{singleSaveError}</Alert>}
 
                     <div className="d-flex gap-2 mt-4">
@@ -643,6 +814,7 @@ export default function AddJob() {
                           <th style={{ minWidth: '220px' }}>Job Title</th>
                           <th style={{ minWidth: '180px' }}>Company</th>
                           <th style={{ minWidth: '140px' }}>Location</th>
+                          <th style={{ minWidth: '150px' }}>Company & Contacts</th>
                           <th>Source Link</th>
                         </tr>
                       </thead>
@@ -714,6 +886,22 @@ export default function AddJob() {
                               )}
                             </td>
                             <td>
+                              {item.company_intelligence ? (
+                                <Button
+                                  variant="outline-primary"
+                                  size="sm"
+                                  className="py-0 px-2 text-start"
+                                  style={{ fontSize: 11 }}
+                                  onClick={() => setSelectedBulkIntel(item.company_intelligence!)}
+                                  title="View discovered company details and employees"
+                                >
+                                  🏢 {item.company_intelligence.contacts?.length || 0} Contacts
+                                </Button>
+                              ) : (
+                                <span className="small text-muted">—</span>
+                              )}
+                            </td>
+                            <td>
                               <a
                                 href={item.url}
                                 target="_blank"
@@ -764,6 +952,141 @@ export default function AddJob() {
             )}
           </>
         )}
+
+        {/* Bulk Intelligence Modal Preview */}
+        <Modal
+          show={!!selectedBulkIntel}
+          onHide={() => setSelectedBulkIntel(null)}
+          size="lg"
+          centered
+        >
+          <Modal.Header closeButton>
+            <Modal.Title className="fs-6 fw-bold">
+              🏢 {selectedBulkIntel?.company_name} — Intelligence Preview
+            </Modal.Title>
+          </Modal.Header>
+          <Modal.Body className="p-3">
+            {selectedBulkIntel && (
+              <div>
+                <div className="d-flex justify-content-between align-items-center mb-3">
+                  <div>
+                    <Badge
+                      bg={selectedBulkIntel.confidence === 'HIGH' ? 'success' : 'secondary'}
+                      className="me-2"
+                    >
+                      {selectedBulkIntel.confidence} Confidence
+                    </Badge>
+                    {selectedBulkIntel.industry && (
+                      <span className="text-muted small me-2">• {selectedBulkIntel.industry}</span>
+                    )}
+                    {selectedBulkIntel.headquarters && (
+                      <span className="text-muted small">• {selectedBulkIntel.headquarters}</span>
+                    )}
+                  </div>
+                  <div className="d-flex gap-2">
+                    {selectedBulkIntel.website && (
+                      <a
+                        href={selectedBulkIntel.website}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-sm btn-outline-primary py-0 px-2"
+                        style={{ fontSize: 12 }}
+                      >
+                        🌐 Website
+                      </a>
+                    )}
+                    {selectedBulkIntel.linkedin_url && (
+                      <a
+                        href={selectedBulkIntel.linkedin_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-sm btn-outline-primary py-0 px-2"
+                        style={{ fontSize: 12 }}
+                      >
+                        💼 LinkedIn
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {selectedBulkIntel.description && (
+                  <p className="small text-secondary mb-3">{selectedBulkIntel.description}</p>
+                )}
+
+                <h6 className="fw-semibold small mb-2">
+                  Discovered Public Contacts ({selectedBulkIntel.contacts?.length || 0})
+                </h6>
+
+                {(!selectedBulkIntel.contacts || selectedBulkIntel.contacts.length === 0) ? (
+                  <div className="text-muted small py-3 text-center bg-light rounded">
+                    No public contacts identified for this company during extraction.
+                  </div>
+                ) : (
+                  <div className="d-flex flex-column gap-2">
+                    {selectedBulkIntel.contacts.map((contact, idx) => (
+                      <Card key={idx} className="border bg-light p-2" style={{ borderRadius: 6 }}>
+                        <div className="d-flex justify-content-between align-items-start">
+                          <div>
+                            <div className="d-flex align-items-center gap-2 mb-1">
+                              <span className="fw-semibold small">{contact.full_name}</span>
+                              <Badge
+                                bg={
+                                  contact.category === 'hiring'
+                                    ? 'success'
+                                    : contact.category === 'leadership'
+                                    ? 'primary'
+                                    : 'secondary'
+                                }
+                                style={{ fontSize: 10 }}
+                              >
+                                {contact.category === 'hiring'
+                                  ? 'Hiring'
+                                  : contact.category === 'leadership'
+                                  ? 'Leadership'
+                                  : 'Team'}
+                              </Badge>
+                            </div>
+                            <div className="text-muted" style={{ fontSize: 12 }}>
+                              {contact.job_title}
+                              {contact.department && ` • ${contact.department}`}
+                            </div>
+                            {contact.evidence && (
+                              <div className="text-secondary fst-italic" style={{ fontSize: 11 }}>
+                                💡 {contact.evidence}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            {contact.linkedin_url ? (
+                              <a
+                                href={contact.linkedin_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn btn-sm btn-outline-primary py-0 px-2"
+                                style={{ fontSize: 12 }}
+                              >
+                                🔗 LinkedIn
+                              </a>
+                            ) : (
+                              <Badge bg="light" text="muted" className="border">
+                                No public link
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" size="sm" onClick={() => setSelectedBulkIntel(null)}>
+              Close
+            </Button>
+          </Modal.Footer>
+        </Modal>
       </Container>
     </>
   )
