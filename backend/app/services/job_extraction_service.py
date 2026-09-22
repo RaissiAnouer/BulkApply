@@ -76,25 +76,7 @@ def extract_job_from_url(url: str) -> dict:
                 ),
             }
 
-    # Perform inline company & employees intelligence during job extraction
-    company_name = result.get("company")
-    if company_name or url:
-        try:
-            from app.services.company_intelligence_service import run_inline_company_intelligence
-            intel = run_inline_company_intelligence(
-                company_name=company_name,
-                job_title=result.get("title"),
-                job_location=result.get("location"),
-                job_url=url,
-                job_skills=result.get("skills"),
-            )
-            result["company_intelligence"] = intel
-        except Exception as e:
-            logger.warning("[JOB_EXTRACT] Inline company intelligence failed for %s: %s", url, e)
-            result["company_intelligence"] = None
-    else:
-        result["company_intelligence"] = None
-
+    result["company_intelligence"] = None
     return result
 
 

@@ -128,6 +128,118 @@ export default function AddJob() {
   const [bulkSaveSuccess, setBulkSaveSuccess] = useState('')
   const [selectedBulkIntel, setSelectedBulkIntel] = useState<CompanyIntelligenceData | null>(null)
 
+  // --- On-demand Company Employee Scanning State ---
+  const [singleScanningEmployees, setSingleScanningEmployees] = useState(false)
+  const [singleScanError, setSingleScanError] = useState('')
+  const [scanningItemIds, setScanningItemIds] = useState<Set<string>>(new Set())
+  const [bulkScanningSelected, setBulkScanningSelected] = useState(false)
+
+  // Handle on-demand employee scanning for single job review
+  const handleScanSingleEmployees = async () => {
+    const comp = singleForm.company || singleExtracted?.company
+    if (!comp && !singleUrl) return
+
+    setSingleScanningEmployees(true)
+    setSingleScanError('')
+
+    try {
+      const data = await api<CompanyIntelligenceData | null>('/api/jobs/scan-company', {
+        method: 'POST',
+        body: JSON.stringify({
+          company_name: comp || null,
+          title: singleForm.title || singleExtracted?.title || null,
+          location: singleForm.location || singleExtracted?.location || null,
+          url: singleExtracted?.url || singleUrl.trim() || null,
+          skills: singleForm.skills || singleExtracted?.skills || null,
+        }),
+      })
+
+      if (singleExtracted) {
+        setSingleExtracted({
+          ...singleExtracted,
+          company_intelligence: data,
+        })
+      }
+    } catch (err: any) {
+      setSingleScanError(err.message || 'Failed to scan for company employees.')
+    } finally {
+      setSingleScanningEmployees(false)
+    }
+  }
+
+  // Handle on-demand employee scanning for a single row in bulk staging
+  const handleScanBulkItemEmployees = async (item: BulkStagingItem) => {
+    const comp = item.company
+    if (!comp && !item.url) return
+
+    setScanningItemIds((prev) => new Set(prev).add(item.id))
+
+    try {
+      const data = await api<CompanyIntelligenceData | null>('/api/jobs/scan-company', {
+        method: 'POST',
+        body: JSON.stringify({
+          company_name: comp || null,
+          title: item.title || null,
+          location: item.location || null,
+          url: item.url || null,
+          skills: item.skills || null,
+        }),
+      })
+
+      setBulkItems((prev) =>
+        prev.map((it) => (it.id === item.id ? { ...it, company_intelligence: data } : it))
+      )
+    } catch (err: any) {
+      console.error('Scan failed for item', item.id, err)
+    } finally {
+      setScanningItemIds((prev) => {
+        const next = new Set(prev)
+        next.delete(item.id)
+        return next
+      })
+    }
+  }
+
+  // Handle batch scanning of employees for selected bulk jobs
+  const handleScanSelectedBulkEmployees = async () => {
+    const targets = bulkItems.filter(
+      (i) => i.selected && i.status === 'extracted' && !i.company_intelligence
+    )
+    if (targets.length === 0) return
+
+    setBulkScanningSelected(true)
+    try {
+      for (const item of targets) {
+        setScanningItemIds((prev) => new Set(prev).add(item.id))
+        try {
+          const data = await api<CompanyIntelligenceData | null>('/api/jobs/scan-company', {
+            method: 'POST',
+            body: JSON.stringify({
+              company_name: item.company || null,
+              title: item.title || null,
+              location: item.location || null,
+              url: item.url || null,
+              skills: item.skills || null,
+            }),
+          })
+          setBulkItems((prev) =>
+            prev.map((it) => (it.id === item.id ? { ...it, company_intelligence: data } : it))
+          )
+        } catch (e) {
+          console.error('Scan error for item', item.id, e)
+        } finally {
+          setScanningItemIds((prev) => {
+            const next = new Set(prev)
+            next.delete(item.id)
+            return next
+          })
+        }
+      }
+    } finally {
+      setBulkScanningSelected(false)
+    }
+  }
+
   // Parse valid URLs from raw textarea in real-time
   const parsedUrls = useMemo(() => {
     const rawTokens = bulkRawText
@@ -519,6 +631,54 @@ export default function AddJob() {
                       </Col>
                     </Row>
 
+                    {/* On-Demand Company & Employee Worker Scan */}
+                    <div className="mt-4 p-3 rounded border bg-light d-flex flex-column gap-2">
+                      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div>
+                          <div className="fw-semibold small d-flex align-items-center gap-2">
+                            <span>🏢 Company & Employee Intelligence</span>
+                            {singleExtracted?.company_intelligence && (
+                              <Badge bg="success" style={{ fontSize: 10 }}>Scanned</Badge>
+                            )}
+                          </div>
+                          <div className="text-muted" style={{ fontSize: 12 }}>
+                            {singleExtracted?.company_intelligence
+                              ? `Identified ${singleExtracted.company_intelligence.contacts?.length || 0} employees & recruiters with public LinkedIn profiles.`
+                              : `Trigger worker to discover company details, key recruiters, and hiring managers.`}
+                          </div>
+                        </div>
+
+                        <Button
+                          type="button"
+                          variant={singleExtracted?.company_intelligence ? "outline-primary" : "primary"}
+                          size="sm"
+                          disabled={singleScanningEmployees || (!singleForm.company && !singleExtracted?.company)}
+                          onClick={handleScanSingleEmployees}
+                          style={{
+                            backgroundColor: singleExtracted?.company_intelligence ? undefined : 'var(--color-primary)',
+                            borderColor: 'var(--color-primary)',
+                          }}
+                        >
+                          {singleScanningEmployees ? (
+                            <>
+                              <Spinner animation="border" size="sm" className="me-2" />
+                              Scanning Employees...
+                            </>
+                          ) : singleExtracted?.company_intelligence ? (
+                            '🔄 Re-scan for Employees'
+                          ) : (
+                            '🔍 Scan for Employees'
+                          )}
+                        </Button>
+                      </div>
+
+                      {singleScanError && (
+                        <Alert variant="danger" className="py-1 px-2 mb-0 small mt-1">
+                          {singleScanError}
+                        </Alert>
+                      )}
+                    </div>
+
                     {/* Inline Company & Contacts Intelligence Preview */}
                     {singleExtracted?.company_intelligence && (
                       <div className="mt-4 p-3 rounded border bg-light">
@@ -775,7 +935,7 @@ export default function AddJob() {
                         Select the jobs you want to import into your saved jobs library.
                       </span>
                     </div>
-                    <div className="d-flex gap-2">
+                    <div className="d-flex align-items-center gap-2 flex-wrap">
                       <Badge bg="success" className="p-2">
                         {bulkItems.filter((i) => i.status === 'extracted').length} Extracted
                       </Badge>
@@ -787,6 +947,25 @@ export default function AddJob() {
                           {bulkItems.filter((i) => i.status === 'failed').length} Failed
                         </Badge>
                       )}
+                      <Button
+                        variant="outline-primary"
+                        size="sm"
+                        className="ms-1"
+                        disabled={
+                          bulkScanningSelected ||
+                          bulkItems.filter((i) => i.selected && i.status === 'extracted' && !i.company_intelligence).length === 0
+                        }
+                        onClick={handleScanSelectedBulkEmployees}
+                      >
+                        {bulkScanningSelected ? (
+                          <>
+                            <Spinner animation="border" size="sm" className="me-1" />
+                            Scanning Employees...
+                          </>
+                        ) : (
+                          '👥 Scan Employees for Selected'
+                        )}
+                      </Button>
                     </div>
                   </div>
 
@@ -896,6 +1075,30 @@ export default function AddJob() {
                                   title="View discovered company details and employees"
                                 >
                                   🏢 {item.company_intelligence.contacts?.length || 0} Contacts
+                                </Button>
+                              ) : item.status === 'extracted' ? (
+                                <Button
+                                  variant="outline-secondary"
+                                  size="sm"
+                                  className="py-0 px-2 text-start"
+                                  style={{ fontSize: 11 }}
+                                  disabled={scanningItemIds.has(item.id) || (!item.company && !item.url)}
+                                  onClick={() => handleScanBulkItemEmployees(item)}
+                                  title="Scan for company information and key employees"
+                                >
+                                  {scanningItemIds.has(item.id) ? (
+                                    <>
+                                      <Spinner
+                                        animation="border"
+                                        size="sm"
+                                        className="me-1"
+                                        style={{ width: '10px', height: '10px' }}
+                                      />
+                                      Scanning...
+                                    </>
+                                  ) : (
+                                    '🔍 Scan Employees'
+                                  )}
                                 </Button>
                               ) : (
                                 <span className="small text-muted">—</span>

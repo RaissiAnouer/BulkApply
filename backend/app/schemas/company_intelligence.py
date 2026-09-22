@@ -15,6 +15,14 @@ class CompanyContactData(BaseModel):
     is_relevant: bool = True
 
 
+class CompanyScanRequest(BaseModel):
+    company_name: str | None = None
+    title: str | None = None
+    location: str | None = None
+    url: str | None = None
+    skills: str | None = None
+
+
 class CompanyIntelligenceData(BaseModel):
     company_name: str
     website: str | None = None

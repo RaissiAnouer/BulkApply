@@ -22,6 +22,8 @@ from app.schemas.company_intelligence import (
     CompanyIntelligenceResponse,
     CompanyContactResponse,
     CompanyContactUpdate,
+    CompanyScanRequest,
+    CompanyIntelligenceData,
 )
 from app.services import job_service, company_intelligence_service
 
@@ -69,6 +71,28 @@ def extract_job_from_url(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Extraction failed: {str(e)}"
+        )
+
+
+@router.post("/scan-company", response_model=CompanyIntelligenceData | None)
+def scan_company_intelligence(
+    data: CompanyScanRequest,
+    user: User = Depends(get_current_user),
+):
+    """On-demand worker scan for company details and verified public employees."""
+    try:
+        intel = company_intelligence_service.run_inline_company_intelligence(
+            company_name=data.company_name,
+            job_title=data.title,
+            job_location=data.location,
+            job_url=data.url,
+            job_skills=data.skills,
+        )
+        return intel
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Employee scan failed: {str(e)}"
         )
 
 

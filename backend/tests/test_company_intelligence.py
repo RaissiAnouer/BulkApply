@@ -194,6 +194,21 @@ def test_company_intelligence_suite():
             saved_contacts = db.query(CompanyContact).filter(CompanyContact.intelligence_id == db_intel.id).all()
             assert len(saved_contacts) == 3
 
+        # 8. Test On-Demand scan_company_intelligence endpoint
+        from app.schemas.company_intelligence import CompanyScanRequest
+        from app.routes.jobs import scan_company_intelligence
+        with patch("app.services.company_intelligence_service.enrich_company_info", return_value=mock_info), \
+             patch("app.services.company_intelligence_service.discover_and_verify_contacts", return_value=mock_contacts):
+            scan_req = CompanyScanRequest(
+                company_name="Stripe",
+                title="Staff Engineer",
+                location="San Francisco, CA",
+            )
+            scanned_res = scan_company_intelligence(data=scan_req, user=user)
+            assert scanned_res is not None
+            assert scanned_res["company_name"] == "Stripe"
+            assert len(scanned_res["contacts"]) == 3
+
         print("ALL COMPANY & CONTACT INTELLIGENCE TESTS PASSED SUCCESSFULLY!")
 
     finally:
