@@ -1,12 +1,22 @@
 """Job CRUD service — business logic for job management."""
 
+import asyncio
 import math
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from app.models.job import Job
 from app.models.user import User
-from app.schemas.job import JobSaveRequest, JobUpdateRequest
+from app.schemas.job import (
+    JobSaveRequest,
+    JobUpdateRequest,
+    JobResponse,
+    JobExtractedResponse,
+    BulkJobItemResult,
+    BulkJobExtractResponse,
+    BulkJobSaveRequest,
+    BulkJobSaveResponse,
+)
 from app.services.job_extraction_service import extract_job_from_url
 
 
@@ -144,3 +154,135 @@ def delete_job(db: Session, user: User, job_id: int) -> None:
     job = get_job(db, user, job_id)
     db.delete(job)
     db.commit()
+
+
+async def bulk_extract_jobs(db: Session, user: User, urls: list[str]) -> BulkJobExtractResponse:
+    """
+    Extract multiple job postings concurrently with deduplication and error isolation.
+    Bounded by an asyncio.Semaphore to prevent rate limits.
+    """
+    seen = set()
+    clean_urls = []
+    for raw in urls:
+        u = raw.strip()
+        if u and (u.startswith("http://") or u.startswith("https://")) and u not in seen:
+            seen.add(u)
+            clean_urls.append(u)
+
+    if not clean_urls:
+        return BulkJobExtractResponse(
+            total=0,
+            extracted_count=0,
+            duplicate_count=0,
+            failed_count=0,
+            items=[],
+        )
+
+    # Check for existing URLs already in this user's jobs
+    existing_jobs = db.query(Job).filter(
+        Job.user_id == user.id,
+        Job.url.in_(clean_urls)
+    ).all()
+    existing_map = {j.url: j.id for j in existing_jobs}
+
+    items: list[BulkJobItemResult] = []
+    urls_to_extract: list[str] = []
+
+    for u in clean_urls:
+        if u in existing_map:
+            items.append(
+                BulkJobItemResult(
+                    url=u,
+                    status="duplicate",
+                    error="Already in your saved jobs",
+                    existing_job_id=existing_map[u],
+                )
+            )
+        else:
+            urls_to_extract.append(u)
+
+    semaphore = asyncio.Semaphore(3)
+
+    async def _extract_one(target_url: str) -> BulkJobItemResult:
+        async with semaphore:
+            try:
+                res_dict = await asyncio.to_thread(extract_job_from_url, target_url)
+                extracted_resp = JobExtractedResponse(url=target_url, **res_dict)
+                return BulkJobItemResult(
+                    url=target_url,
+                    status="extracted",
+                    data=extracted_resp,
+                )
+            except Exception as e:
+                return BulkJobItemResult(
+                    url=target_url,
+                    status="failed",
+                    error=str(e),
+                )
+
+    if urls_to_extract:
+        extracted_results = await asyncio.gather(
+            *[_extract_one(u) for u in urls_to_extract],
+            return_exceptions=False
+        )
+        items.extend(extracted_results)
+
+    extracted_count = sum(1 for i in items if i.status == "extracted")
+    duplicate_count = sum(1 for i in items if i.status == "duplicate")
+    failed_count = sum(1 for i in items if i.status == "failed")
+
+    return BulkJobExtractResponse(
+        total=len(items),
+        extracted_count=extracted_count,
+        duplicate_count=duplicate_count,
+        failed_count=failed_count,
+        items=items,
+    )
+
+
+def bulk_save_jobs(db: Session, user: User, data: BulkJobSaveRequest) -> BulkJobSaveResponse:
+    """Save multiple reviewed jobs in bulk, skipping duplicates."""
+    saved_jobs = []
+    skipped_count = 0
+
+    incoming_urls = [j.url.strip() for j in data.jobs if j.url and j.url.strip()]
+    existing = db.query(Job.url).filter(
+        Job.user_id == user.id,
+        Job.url.in_(incoming_urls)
+    ).all()
+    existing_urls = {r[0] for r in existing}
+
+    for job_req in data.jobs:
+        u = job_req.url.strip()
+        if not u or u in existing_urls:
+            skipped_count += 1
+            continue
+
+        job = Job(
+            user_id=user.id,
+            url=u,
+            title=job_req.title,
+            company=job_req.company,
+            location=job_req.location,
+            work_type=job_req.work_type,
+            experience_level=job_req.experience_level,
+            skills=job_req.skills,
+            description=job_req.description,
+            salary=job_req.salary,
+            application_url=job_req.application_url,
+            application_method=job_req.application_method,
+            status="ready",
+        )
+        db.add(job)
+        existing_urls.add(u)
+        saved_jobs.append(job)
+
+    db.commit()
+    for j in saved_jobs:
+        db.refresh(j)
+
+    return BulkJobSaveResponse(
+        saved_count=len(saved_jobs),
+        skipped_count=skipped_count,
+        saved_jobs=[JobResponse.model_validate(j) for j in saved_jobs],
+    )

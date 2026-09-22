@@ -13,10 +13,34 @@ from app.schemas.job import (
     JobUpdateRequest,
     JobResponse,
     JobListResponse,
+    BulkJobExtractRequest,
+    BulkJobExtractResponse,
+    BulkJobSaveRequest,
+    BulkJobSaveResponse,
 )
 from app.services import job_service
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+
+@router.post("/bulk-extract", response_model=BulkJobExtractResponse)
+async def bulk_extract_jobs(
+    data: BulkJobExtractRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Extract multiple job postings in bulk concurrently with deduplication."""
+    return await job_service.bulk_extract_jobs(db, user, data.urls)
+
+
+@router.post("/bulk-save", response_model=BulkJobSaveResponse)
+def bulk_save_jobs(
+    data: BulkJobSaveRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save multiple reviewed jobs in bulk to the user's job list."""
+    return job_service.bulk_save_jobs(db, user, data)
 
 
 @router.post("/extract", response_model=JobExtractedResponse)

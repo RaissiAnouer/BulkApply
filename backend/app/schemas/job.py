@@ -150,3 +150,42 @@ class GeminiJobExtraction(BaseModel):
     salary: str | None = None
     application_url: str | None = None
     application_method: str | None = None  # form, email, external_link
+
+
+# ---------------------------------------------------------------------------
+# Bulk Import Schemas
+# ---------------------------------------------------------------------------
+
+class BulkJobExtractRequest(BaseModel):
+    """Submitted by the user to extract multiple job URLs in bulk."""
+    urls: list[str]
+
+
+class BulkJobItemResult(BaseModel):
+    """Result of extracting an individual URL in a bulk batch."""
+    url: str
+    status: str  # "extracted", "duplicate", "failed"
+    error: str | None = None
+    data: JobExtractedResponse | None = None
+    existing_job_id: int | None = None
+
+
+class BulkJobExtractResponse(BaseModel):
+    """Response containing batch extraction statistics and items."""
+    total: int
+    extracted_count: int
+    duplicate_count: int
+    failed_count: int
+    items: list[BulkJobItemResult]
+
+
+class BulkJobSaveRequest(BaseModel):
+    """List of reviewed job objects to save in bulk."""
+    jobs: list[JobSaveRequest]
+
+
+class BulkJobSaveResponse(BaseModel):
+    """Response returned after bulk saving jobs."""
+    saved_count: int
+    skipped_count: int
+    saved_jobs: list[JobResponse]
