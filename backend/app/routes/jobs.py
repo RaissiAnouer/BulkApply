@@ -1,6 +1,6 @@
 """Job API endpoints for Job Seekers."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -18,7 +18,12 @@ from app.schemas.job import (
     BulkJobSaveRequest,
     BulkJobSaveResponse,
 )
-from app.services import job_service
+from app.schemas.company_intelligence import (
+    CompanyIntelligenceResponse,
+    CompanyContactResponse,
+    CompanyContactUpdate,
+)
+from app.services import job_service, company_intelligence_service
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -36,11 +41,15 @@ async def bulk_extract_jobs(
 @router.post("/bulk-save", response_model=BulkJobSaveResponse)
 def bulk_save_jobs(
     data: BulkJobSaveRequest,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Save multiple reviewed jobs in bulk to the user's job list."""
-    return job_service.bulk_save_jobs(db, user, data)
+    res = job_service.bulk_save_jobs(db, user, data)
+    for saved_job in res.saved_jobs:
+        background_tasks.add_task(company_intelligence_service.run_company_intelligence_task, saved_job.id)
+    return res
 
 
 @router.post("/extract", response_model=JobExtractedResponse)
@@ -62,12 +71,20 @@ def extract_job_from_url(
 @router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 def save_job(
     data: JobSaveRequest,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Save a reviewed job to the user's job list."""
+    """Save a reviewed job to the user's job list and trigger company intelligence."""
     try:
-        return job_service.save_job(db, user, data)
+        job = job_service.save_job(db, user, data)
+        background_tasks.add_task(company_intelligence_service.run_company_intelligence_task, job.id)
+        return job
+    except ValueError as e:
+        error_msg = str(e)
+        if "already added" in error_msg:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error_msg)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
     except ValueError as e:
         error_msg = str(e)
         if "already added" in error_msg:
@@ -149,3 +166,73 @@ def delete_job(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+
+@router.get("/{job_id}/company-intelligence", response_model=CompanyIntelligenceResponse)
+def get_company_intelligence(
+    job_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve company intelligence and discovered contacts for a job."""
+    try:
+        intel = company_intelligence_service.get_company_intelligence_for_job(db, job_id, user.id)
+        if not intel:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company intelligence not found.")
+        return intel
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.post("/{job_id}/company-intelligence/refresh", response_model=CompanyIntelligenceResponse)
+def refresh_company_intelligence(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Re-trigger background company intelligence research for a job."""
+    try:
+        intel = company_intelligence_service.get_company_intelligence_for_job(db, job_id, user.id)
+        if not intel:
+            job = job_service.get_job(db, user, job_id)
+            intel = company_intelligence_service.process_company_intelligence(db, job)
+        else:
+            intel.status = "RESEARCHING"
+            intel.error_message = None
+            db.commit()
+            background_tasks.add_task(company_intelligence_service.run_company_intelligence_task, job_id)
+        return intel
+    except (ValueError, PermissionError) as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.patch("/{job_id}/company-intelligence/contacts/{contact_id}", response_model=CompanyContactResponse)
+def update_contact_relevance(
+    job_id: int,
+    contact_id: int,
+    data: CompanyContactUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Toggle whether a discovered contact is marked relevant."""
+    try:
+        return company_intelligence_service.update_contact_relevance(
+            db, job_id, contact_id, user.id, data.is_relevant
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.delete("/{job_id}/company-intelligence/contacts/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_contact(
+    job_id: int,
+    contact_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove a contact from company intelligence."""
+    try:
+        company_intelligence_service.delete_contact(db, job_id, contact_id, user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

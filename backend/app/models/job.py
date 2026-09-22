@@ -40,3 +40,6 @@ class Job(Base):
     applications = relationship(
         "Application", back_populates="job", cascade="all, delete-orphan"
     )
+    company_intelligence = relationship(
+        "CompanyIntelligence", back_populates="job", uselist=False, cascade="all, delete-orphan"
+    )
