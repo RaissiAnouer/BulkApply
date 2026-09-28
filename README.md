@@ -12,7 +12,7 @@ Automated job application system — MVP.
 
 ### Backend
 
-```bash
+``bash
 cd backend
 python -m venv venv
 .\venv\Scripts\activate   # Windows
